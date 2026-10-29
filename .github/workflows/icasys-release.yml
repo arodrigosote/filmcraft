@@ -62,15 +62,15 @@ jobs:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
         run: |
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          cargo build --release --locked -p filmcraft --target aarch64-apple-darwin
-          cargo build --release --locked -p filmcraft --target x86_64-apple-darwin
+          cargo build --release --locked -p filmcraft -p filmcraft-cli --target aarch64-apple-darwin
+          cargo build --release --locked -p filmcraft -p filmcraft-cli --target x86_64-apple-darwin
 
       - name: Build (${{ matrix.os_name }})
         if: runner.os != 'macOS'
         shell: bash
         env:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
-        run: cargo build --release --locked -p filmcraft
+        run: cargo build --release --locked -p filmcraft -p filmcraft-cli
 
       - name: Install WiX (builds the Windows installer)
         if: runner.os == 'Windows'

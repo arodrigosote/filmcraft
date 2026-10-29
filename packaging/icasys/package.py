@@ -17,6 +17,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 CFG = json.loads((HERE / "icasys.json").read_text(encoding="utf-8"))
 APP, NAME, SLUG, UP = CFG["app"], CFG["name"], CFG["slug"], CFG["upstream_name"]
+CLI = CFG.get("cli")   # companion command-line binary that also serves MCP (only for apps that ship it)
 OWNER = CFG.get("owner", "arodrigosote")
 
 
@@ -60,7 +61,23 @@ def write_licenses(dest: Path):
             fh.write(f"\n{len(rows)} paquetes.\n")
 
 
-def leeme(os_name: str) -> str:
+def mcp_paths():
+    return {"macos": f"/Applications/{NAME}.app/Contents/MacOS/{CLI}", "windows": f"C:\\Program Files\\ICASYS\\{NAME}\\{CLI}.exe", "linux": f"/usr/bin/{CLI}"}
+
+
+def mcp_leeme(os_name: str) -> str:
+    if not CLI:
+        return ""
+    path = mcp_paths()[os_name]
+    return (f"\nCONECTAR UNA IA (MCP): este paquete incluye {CLI}, que sirve el protocolo MCP. NO está activado por defecto: solo funciona cuando un cliente de IA lo lanza.\n"
+            f"  Sin ventana:   \"{path}\" mcp --demo\n"
+            f"  Con la app abierta (puente): abre la app con --control 9876 y usa:  \"{path}\" mcp --bridge 127.0.0.1:9876\n"
+            "  Ejemplo para Claude Code:  claude mcp add icasys-video -- <ruta> mcp --demo\n"
+            "SEGURIDAD: el puerto --control no tiene autenticación (solo escucha en 127.0.0.1, pero cualquier programa de ese equipo puede usarlo mientras esté abierto) y el servidor MCP "
+            "puede leer y escribir donde el usuario pueda. Úsalo solo con clientes de IA de confianza y no lo dejes activo en equipos compartidos. Si la IA es un servicio en la nube, recibe los fotogramas y pantallas que pida.\n")
+
+
+def _leeme_base(os_name: str) -> str:
     head = f"{NAME} {VERSION} (edición ICASYS)\n\n"
     tail = (f"\nPROCEDENCIA: edición de ICASYS basada en {UP}, proyecto de código abierto del equipo de ArtCraft (https://getartcraft.com).\n"
             f"No es un producto de ArtCraft ni está respaldado por ellos. Código de esta edición: https://github.com/{OWNER}/{APP} (rama icasys, commit {commit()[:12]}).\n"
@@ -78,6 +95,10 @@ def leeme(os_name: str) -> str:
                        "Comprueba el archivo descargado (PowerShell):  Get-FileHash <archivo> -Algorithm SHA256\n") + tail
     return head + (f"INSTALAR (.deb, Debian/Ubuntu):  sudo apt install ./icasys-{SLUG}_*.deb\nDESINSTALAR:  sudo apt remove icasys-{SLUG}\n"
                    "Requiere un entorno gráfico X11 o Wayland con OpenGL/Vulkan.\nComprueba el archivo descargado con:  sha256sum -c SHA256SUMS.txt\n") + tail
+
+
+def leeme(os_name: str) -> str:
+    return _leeme_base(os_name) + mcp_leeme(os_name)
 
 
 def macos(out: Path):
@@ -100,6 +121,17 @@ def macos(out: Path):
     else:
         shutil.copy(next(iter(bins.values())), dst)
     os.chmod(dst, 0o755)
+    cli_dst = None
+    if CLI:
+        cbins = {a: ROOT / "target" / t / "release" / CLI for a, t in triples.items() if (ROOT / "target" / t / "release" / CLI).is_file()}
+        if set(cbins) != set(bins):
+            sys.exit(f"{CLI} no se compiló para las mismas arquitecturas que {APP}: {sorted(cbins)} vs {sorted(bins)}")
+        cli_dst = app / "Contents" / "MacOS" / CLI
+        if len(cbins) == 2:
+            sh("lipo", "-create", "-output", cli_dst, *cbins.values())
+        else:
+            shutil.copy(next(iter(cbins.values())), cli_dst)
+        os.chmod(cli_dst, 0o755)
     shutil.copy(ROOT / f"assets/app-icon/{APP}.icns", app / "Contents/Resources" / f"{icon}.icns")
     short = VERSION.split("-")[0]
     (app / "Contents/Info.plist").write_text(plist.replace("@VERSION@", VERSION).replace("@SHORT_VERSION@", short).replace("@BUILD_SHA@", commit()[:12]), encoding="utf-8")
@@ -108,11 +140,15 @@ def macos(out: Path):
     ent = ROOT / "packaging/macos/entitlements.plist"
     if ident:   # Developer ID: hardened runtime + secure timestamp (required for notarisation)
         extra = ["--entitlements", str(ent)] if ent.is_file() else []
-        sh("codesign", "--force", "--options", "runtime", "--timestamp", *extra, "--sign", ident, dst)
+        for f in (dst, cli_dst):
+            if f:
+                sh("codesign", "--force", "--options", "runtime", "--timestamp", *extra, "--sign", ident, f)
         sh("codesign", "--force", "--options", "runtime", "--timestamp", *extra, "--sign", ident, app)
         sh("codesign", "--verify", "--strict", "--deep", app)
     else:       # ad-hoc: runs on this Mac only, Gatekeeper will warn on any other
-        sh("codesign", "--force", "--sign", "-", dst)
+        for f in (dst, cli_dst):
+            if f:
+                sh("codesign", "--force", "--sign", "-", f)
         sh("codesign", "--force", "--sign", "-", app)
     write_licenses(stage / "Licencias")
     (stage / "LEEME.txt").write_text(leeme("macos"), encoding="utf-8")
@@ -155,6 +191,9 @@ def linux(out: Path):
     stage.mkdir(parents=True)
     shutil.copy(binp, stage / APP)
     os.chmod(stage / APP, 0o755)
+    if CLI:
+        shutil.copy(ROOT / "target" / "release" / CLI, stage / CLI)
+        os.chmod(stage / CLI, 0o755)
     shutil.copy(desktop, stage / desktop.name)
     shutil.copy(icons / "256x256/apps" / f"{app_id}.png", stage / f"{app_id}.png")
     write_licenses(stage / "Licencias")
@@ -168,6 +207,9 @@ def linux(out: Path):
     (deb / "usr/bin").mkdir(parents=True)
     shutil.copy(binp, deb / "usr/bin" / APP)
     os.chmod(deb / "usr/bin" / APP, 0o755)
+    if CLI:
+        shutil.copy(ROOT / "target" / "release" / CLI, deb / "usr/bin" / CLI)
+        os.chmod(deb / "usr/bin" / CLI, 0o755)
     (deb / "usr/share/applications").mkdir(parents=True)
     shutil.copy(desktop, deb / "usr/share/applications" / desktop.name)
     for sz in icons.glob("*x*"):
@@ -210,6 +252,8 @@ def windows(out: Path):
     shutil.rmtree(stage, ignore_errors=True)
     (stage / "app").mkdir(parents=True)
     shutil.copy(exe, stage / "app" / f"{NAME}.exe")
+    if CLI:
+        shutil.copy(ROOT / "target" / "release" / f"{CLI}.exe", stage / "app" / f"{CLI}.exe")
     signed = False
     pfx, pw = os.environ.get("WIN_SIGN_PFX", ""), os.environ.get("WIN_SIGN_PASSWORD", "")
     signtool = None
@@ -218,7 +262,8 @@ def windows(out: Path):
         if not tools:
             sys.exit("signtool.exe no encontrado")
         signtool = tools[-1]
-        sh(signtool, "sign", "/f", pfx, "/p", pw, "/fd", "SHA256", "/tr", "http://timestamp.digicert.com", "/td", "SHA256", stage / "app" / f"{NAME}.exe")
+        for f in [stage / "app" / f"{NAME}.exe"] + ([stage / "app" / f"{CLI}.exe"] if CLI else []):
+            sh(signtool, "sign", "/f", pfx, "/p", pw, "/fd", "SHA256", "/tr", "http://timestamp.digicert.com", "/td", "SHA256", f)
         signed = True
     write_licenses(stage / "app" / "Licencias")
     (stage / "app" / "LEEME.txt").write_text(leeme("windows"), encoding="utf-8")
@@ -298,7 +343,7 @@ def windows_test(out: Path):
     r = subprocess.run(["msiexec", "/i", str(msi), "/qn", "/norestart", "/l*v", str(log)])
     if r.returncode != 0:
         print(log.read_text(errors="replace")[-3000:]); sys.exit(f"msiexec /i falló ({r.returncode})")
-    problems = [str(p) for p in (inst / f"{NAME}.exe", inst / "LEEME.txt", inst / "Licencias" / "LICENSE-MIT", inst / "Licencias" / "NOTICE", lnk) if not p.exists()]
+    problems = [str(p) for p in [inst / f"{NAME}.exe", inst / "LEEME.txt", inst / "Licencias" / "LICENSE-MIT", inst / "Licencias" / "NOTICE", lnk] + ([inst / f"{CLI}.exe"] if CLI else []) if not p.exists()]
     r2 = subprocess.run(["msiexec", "/x", str(msi), "/qn", "/norestart", "/l*v", str(out / "msi-uninstall.log")])
     left = [str(p) for p in (inst / f"{NAME}.exe", lnk) if p.exists()]
     for f in (log, out / "msi-uninstall.log"):
@@ -338,7 +383,7 @@ def release(dist: Path):
     c = commit()
     (dist / "manifest.json").write_text(json.dumps({
         "name": NAME, "app_id": APP, "version": VERSION, "edition": "icasys", "commit": c, "branch": "icasys",
-        "upstream_base": CFG.get("upstream_base", ""), "signing": sign, "assets": assets,
+        "upstream_base": CFG.get("upstream_base", ""), "signing": sign, "mcp_cli": CLI, "assets": assets,
         "source": f"https://github.com/{OWNER}/{APP}/tree/{c}"}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     mb = lambda n: f"{n / 1048576:.0f} MB"
     osn = {"macos": "macOS", "windows": "Windows", "linux": "Linux"}
@@ -349,6 +394,22 @@ def release(dist: Path):
             + (" ni notarizados" if "macos" in unsigned else "") + f". {'macOS' if 'macos' in unsigned else 'El sistema'} o Windows pueden mostrar una advertencia la primera vez; el `LEEME` de cada paquete explica cómo abrirlos. "
             "Descárgalos solo de esta página o del sitio oficial de ICASYS y comprueba la suma SHA-256.\n") if unsigned else ""
     (dist / "title.txt").write_text(f"{NAME} {VERSION} · edición ICASYS 1" + (" (vista previa)" if unsigned else ""), encoding="utf-8")
+    mcp_notes = (f"""## Conectar una IA (MCP)
+
+Incluye `{CLI}`, que sirve el protocolo **MCP** para que un cliente de IA edite el proyecto. **Viene desactivado**: solo funciona cuando un cliente de IA lo lanza.
+
+| Sistema | Ruta de `{CLI}` |
+|---|---|
+| macOS | `{mcp_paths()['macos']}` |
+| Windows | `{mcp_paths()['windows']}` |
+| Linux | `{mcp_paths()['linux']}` |
+
+- Sin ventana: `{CLI} mcp --demo` (o `--project proyecto.fcproj`).
+- Con la app abierta: inicia la app con `--control 9876` y usa `{CLI} mcp --bridge 127.0.0.1:9876`.
+
+**Seguridad:** el puerto `--control` no tiene autenticación (solo escucha en `127.0.0.1`, pero cualquier programa de ese equipo puede usarlo mientras esté abierto) y el servidor MCP puede leer y escribir donde el usuario pueda. Úsalo solo con clientes de IA de confianza y no lo dejes activo en equipos compartidos. Si la IA es un servicio en la nube, recibe los fotogramas y pantallas que pida.
+
+""" if CLI else "")
     (dist / "RELEASE_NOTES.md").write_text(f"""# {NAME} {VERSION} — edición ICASYS 1
 
 Edición de **ICASYS** (<https://icasys.mx>) del programa de código abierto **{UP}**, creado por el equipo y la comunidad de **ArtCraft** (<https://getartcraft.com>). No es un producto de ArtCraft ni cuenta con su respaldo.
@@ -366,7 +427,7 @@ Las sumas SHA-256 están en `SHA256SUMS.txt`. Cada paquete trae un `LEEME` con l
 
 Solo la identidad visible: nombre del producto, iconos, enlaces de ayuda y "Acerca de" hacia ICASYS, y el crédito de atribución. El motor no se modifica. Interfaz en español incluida (excepto donde el proyecto original no la ofrece).
 
-## Privacidad
+{mcp_notes}## Privacidad
 
 Sin telemetría, sin cuentas y sin servicios en la nube. Las conexiones de red son opcionales y las inicia el usuario.
 
