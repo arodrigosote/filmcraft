@@ -140,13 +140,13 @@ def macos(out: Path):
     ent = ROOT / "packaging/macos/entitlements.plist"
     if ident:   # Developer ID: hardened runtime + secure timestamp (required for notarisation)
         extra = ["--entitlements", str(ent)] if ent.is_file() else []
-        for f in (dst, cli_dst):
+        for f in (cli_dst, dst):   # nested code first, then the main executable, then the bundle
             if f:
                 sh("codesign", "--force", "--options", "runtime", "--timestamp", *extra, "--sign", ident, f)
         sh("codesign", "--force", "--options", "runtime", "--timestamp", *extra, "--sign", ident, app)
         sh("codesign", "--verify", "--strict", "--deep", app)
     else:       # ad-hoc: runs on this Mac only, Gatekeeper will warn on any other
-        for f in (dst, cli_dst):
+        for f in (cli_dst, dst):   # nested code first, then the main executable, then the bundle
             if f:
                 sh("codesign", "--force", "--sign", "-", f)
         sh("codesign", "--force", "--sign", "-", app)
