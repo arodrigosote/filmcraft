@@ -1,0 +1,12 @@
+{
+  "app": "filmcraft",
+  "name": "ICASYS Video",
+  "slug": "video",
+  "upstream_name": "FilmCraft",
+  "upstream_base": "cedf0c9bd060eb06a977d532402be2097c9ebe42",
+  "owner": "arodrigosote",
+  "es_ui": true,
+  "deb_section": "video",
+  "cli": "filmcraft-cli",
+  "cli_project_ext": "fcproj"
+}

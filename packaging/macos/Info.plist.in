@@ -24,9 +24,9 @@
     <string>zh-Hans</string>
   </array>
   <key>CFBundleDisplayName</key>
-  <string>FilmCraft</string>
+  <string>ICASYS Video</string>
   <key>CFBundleName</key>
-  <string>FilmCraft</string>
+  <string>ICASYS Video</string>
   <key>CFBundleExecutable</key>
   <string>FilmCraft</string>
   <key>CFBundleIdentifier</key>

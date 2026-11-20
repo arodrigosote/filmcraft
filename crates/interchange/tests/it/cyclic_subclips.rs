@@ -1,7 +1,7 @@
 //! Verify that cyclic and deeply chained subclips do not cause infinite recursion (stack overflow)
 //! during interchange export.
 //!
-//! Regression test for https://github.com/storytold/filmcraft/issues/2788.
+//! Regression test for https://github.com/arodrigosote/filmcraft/issues/2788.
 
 use super::support::*;
 use filmcraft_interchange::aaf::{self, AafOptions};
